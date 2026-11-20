@@ -1,0 +1,44 @@
+name: Release
+# Builds the release file from source and attaches it to the release
+# for the tag. Every v* tag ships the .hnmod (Starling):
+# a source-only zip built with pure Python; the game build happens
+# in Starling, not here. Same shape as horizon-locator-heads' release
+# workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the build to"
+        required: true
+        default: "v1.0.0"
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-hnmod:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/package.py
+      - run: python3 tools/check_bundle.py
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          body: |
+            Horizon Auto Fishing 1.0.0 — auto fishing for Horizon/Starling. You cast first by hand, and the mod reels in on the bite and casts again. An independent Rust reimplementation, inspired by Simple Auto Fishing, Auto Fishing + and Auto Fisher Pro; no code from those mods was copied. This implementation's own code is MIT licensed.
+
+            - You cast first — the mod never casts on its own. Reel in by hand and it stops until you cast again.
+            - Human-like delays: every delay gets a small random extra (up to 5 ticks by default).
+            - Modes 1-4: current rod, + break protection, all rods, + break protection.
+            - Break protection: a rod is not used once 5 or fewer durability remain; the all-rods modes swap in the freshest rod from the hotbar or inventory.
+            - Bobber-killed recast, and an opt-in junk filter (off by default, empty list).
+
+            Starling 0.8.0, game 26.3, pinned to Horizon/Starling revision ac874422ed. `.hnmod` only — Starling 0.8.0 cannot load .hmod files.
+
+            sha256 `dcd250312cbb31196d9c528e538ca6b34aadda964699f24bd26d4b2a55da14e0`
+          files: target/*.hnmod

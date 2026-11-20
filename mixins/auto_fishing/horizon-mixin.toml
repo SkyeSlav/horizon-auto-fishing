@@ -1,0 +1,96 @@
+[mod]
+id = "auto_fishing"
+version = "1.0.0"
+priority = 100
+
+# Pinned: the mod reads the game's own fishing state and sends the rod's
+# use packet inside the game's multiplayer code, which is not part of the
+# stable hook points. The Starling build server rewrites this pin to the
+# commit it builds anyway.
+[compatibility]
+horizon_revision = "ac874422ed8f892505ff73d67ae486ecfee7a516"
+
+# The mod's own logic: the bite state machine, modes, delays, commands.
+# No dependencies.
+[[crate]]
+id = "engine"
+path = "engine"
+
+# The player's own right-click with the rod, in the game's multiplayer
+# use path: a cast starts a session, a reel-in ends one. The mod's own
+# uses go out as raw packets, never through here.
+[[injection]]
+id = "use"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::remote_use_item"
+helper = "use.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+# Each client tick on a server: the bobber's nibble flag is read here,
+# and a bite reels the rod in (or a cast goes out after the delay).
+[[injection]]
+id = "tick"
+kind = "HEAD"
+target = "horizon_client::game::remote::Game<'_>::tick_remote"
+helper = "tick.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+]
+
+[[injection]]
+id = "command"
+hook = "command"
+hook_version = 1
+kind = "HEAD"
+helper = "command.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "command", ty = "&str", value = "command" },
+  { name = "ran", ty = "&mut bool", value = "&mut *ran" },
+]
+
+[[injection]]
+id = "commands"
+hook = "commands"
+hook_version = 1
+kind = "HEAD"
+helper = "commands.rs"
+bindings = [
+  { name = "commands", ty = "&mut Vec<&'static str>", value = "&mut *commands" },
+]
+
+[[injection]]
+id = "list"
+hook = "mods"
+hook_version = 1
+kind = "HEAD"
+helper = "list.rs"
+bindings = [
+  { name = "mods", ty = "&mut Vec<crate::game::native_hooks::NativeMod>", value = "&mut *mods" },
+]
+
+[[injection]]
+id = "settings"
+hook = "settings"
+hook_version = 1
+kind = "HEAD"
+helper = "settings.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "mod_id", ty = "&str", value = "mod_id" },
+  { name = "buttons", ty = "&mut Vec<String>", value = "&mut *buttons" },
+]
+
+[[injection]]
+id = "click"
+hook = "settings_click"
+hook_version = 1
+kind = "HEAD"
+helper = "click.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "mod_id", ty = "&str", value = "mod_id" },
+  { name = "button", ty = "usize", value = "button" },
+]
