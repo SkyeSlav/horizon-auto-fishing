@@ -67,7 +67,6 @@ The settings page (Options > Mods > Auto Fishing) has the toggle, the mode, the 
 ## To do
 
 - [ ] 1.0.1 on the registry — the submission is in and waiting on review.
-- [ ] Confirm 1.0.1's bite detection in real play.
 - [ ] Reel on the mod's own bite instead of the splash sound — needs a bobber read in the mod API ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it.
 
 ## Layout
