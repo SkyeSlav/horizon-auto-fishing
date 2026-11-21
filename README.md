@@ -64,6 +64,12 @@ The settings page (Options > Mods > Auto Fishing) has the toggle, the mode, the 
 - If the rod you are holding is about to break, the mod swaps in the freshest usable rod it can find in your hotbar or inventory — in the all-rods modes — and never casts with a rod at 5 or fewer durability in the protected modes.
 - The junk filter throws away one listed item per tick, and only while it is on and the list is not empty.
 
+## To do
+
+- [ ] 1.0.1 on the registry — the submission is in and waiting on review.
+- [ ] Confirm 1.0.1's bite detection in real play.
+- [ ] Reel on the mod's own bite instead of the splash sound — needs a bobber read in the mod API ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it.
+
 ## Layout
 
 - `hmod/`: the 1.0.1 native `.hmod` (Rust crate on the mod API) — the same engine, with the game-facing code in `src/lib.rs`.
