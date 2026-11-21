@@ -22,19 +22,21 @@
 //! list on a remote client — so the bite comes from the splash sound
 //! (`minecraft:entity.fishing_bobber.splash`, heard through
 //! `play_level_sound_at_position` and noted with [`note_bite`]). The
-//! sound cannot prove whose bobber made it, so the first splash after
-//! a cast anchors the bobber's landing spot (in range, in the cast
-//! direction) and only a later splash near that anchor counts as a
-//! bite; a bobber lost with no bite is recovered by a long wait in
-//! `Waiting` instead of by seeing the bobber vanish. Reel-in and
-//! recast go out as `UseItem` packets through
-//! `ClientHost::send_packet`.
+//! sound cannot prove whose bobber made it, so a splash counts as a
+//! bite only when it fits this session's own cast: in range, inside
+//! the cast-direction cone, and at least 100 ticks after the cast.
+//! There is no landing splash to anchor on — neither the engine nor a
+//! server plays one when a bobber enters the water; the sound is the
+//! bite's alone — so the cast itself is the anchor. A bobber lost
+//! with no bite is recovered by a long wait in `Waiting` instead of
+//! by seeing the bobber vanish. Reel-in and recast go out as
+//! `UseItem` packets through `ClientHost::send_packet`.
 
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub const ID: &str = "auto_fishing";
 pub const NAME: &str = "Auto Fishing";
-pub const VERSION: &str = "1.0.1";
+pub const VERSION: &str = "1.0.2";
 pub const DESCRIPTION: &str = "Reels in when a fish bites and casts again, with break protection, inventory rod swapping and human-like delays.";
 
 /// Recast-delay choices the settings page cycles through, in ticks.
@@ -72,28 +74,20 @@ const MODE_NAMES: [&str; 4] = [
 /// or left alone (mode 2).
 const PROTECT_KEEP: i32 = 5;
 
-/// A splash heard within this many ticks of a cast is a candidate for
-/// the bobber landing, not a bite: a cast's bobber lands within about
-/// 100 ticks, and a real bite waits at least 100 ticks after that.
-/// A splash later than this after a cast cannot be the landing, so it
-/// sets no anchor and is ignored.
-const ANCHOR_WINDOW_TICKS: u64 = 100;
-/// A bite counts only this many ticks after the bobber landed: the
-/// lure's wait is 100-600 ticks, then 20-80 ticks to the hook.
+/// A bite counts only this many ticks after the cast: the bobber
+/// takes a few ticks to land and the lure's wait is 100-600 ticks,
+/// then 20-80 ticks to the hook, so nothing this side of 100 ticks
+/// after a cast can be this line's bite.
 const BITE_EARLIEST_TICKS: u64 = 100;
-/// A landing splash is accepted as this session's bobber only within
-/// this many blocks of where the player cast from (a cast lands within
+/// A splash counts as this session's bite only within this many
+/// blocks of where the player cast from (a cast lands within
 /// roughly 30 blocks).
 const CAST_RANGE: f64 = 32.0;
-/// A landing splash must also fall inside this cone around the cast
+/// A bite splash must also fall inside this cone around the cast
 /// direction (half-angle, in cos): the bobber arcs, drops below the
 /// eye-level ray and drifts, so the cone is wide, but a splash from a
-/// fisher casting another way is not this bobber's landing.
+/// fisher casting another way is not this bobber's bite.
 const CAST_CONE_COS: f64 = 0.766; // cos(40 degrees)
-/// A bite splash must land within this many blocks of the recorded
-/// landing position: a bobber stays put in still water, so a splash
-/// farther out is another bobber, not a bite on this line.
-const ANCHOR_RADIUS: f64 = 3.0;
 /// Waiting this long with no bite means the bobber is lost (the server
 /// killed it, or the cast never landed in water): cast again. The mod
 /// API has no bobber read on a client, so this wait is the only
@@ -287,15 +281,11 @@ struct State {
     /// The tick the current wait for a bite started.
     waiting_since: u64,
     /// Where the player's cast went out from, and the look direction
-    /// it went in (a unit vector), for the landing-splash check.
+    /// it went in (a unit vector): the cast is the anchor a later
+    /// splash is checked against, since no landing splash exists
+    /// to anchor the bobber on.
     cast_origin: [f64; 3],
     cast_dir: [f64; 3],
-    /// Where this session's bobber landed, from its landing splash:
-    /// a later splash counts as a bite only near here. None until a
-    /// landing splash is heard, and no bite is accepted without one.
-    anchor: Option<[f64; 3]>,
-    /// The tick the anchor was set (the landing tick).
-    anchor_tick: u64,
     /// The UseItem sequence, counted up per use.
     sequence: i32,
     /// Whether the no-usable-rod warning was already shown this idle stretch.
@@ -321,8 +311,6 @@ impl Default for State {
             waiting_since: 0,
             cast_origin: [0.0; 3],
             cast_dir: [0.0, 0.0, 1.0],
-            anchor: None,
-            anchor_tick: 0,
             sequence: 0,
             warned_no_rod: false,
             manual_reel: false,
@@ -417,7 +405,6 @@ impl State {
         self.manual_reel = false;
         self.phase = Phase::Idle;
         self.warned_no_rod = false;
-        self.anchor = None;
     }
 }
 
@@ -445,8 +432,8 @@ pub struct TickOut {
     pub use_rod: bool,
     pub sequence: i32,
     /// Whether the use is a (re)cast, rather than a reel-in: the
-    /// adapter records the cast's origin and direction for it, so the
-    /// landing splash can anchor the new bobber.
+    /// adapter records the cast's origin and direction for it, so a
+    /// later splash can be checked against the cast.
     pub cast_out: bool,
     pub select_slot: Option<usize>,
     pub swap: Option<(usize, usize)>,
@@ -472,7 +459,7 @@ impl TickOut {
 /// The player's own right-click with the rod, noted by the adapter's
 /// use hook: `reeling` when the line was out (the player reeled in),
 /// a cast otherwise. `origin` is where the player stood and `dir` the
-/// unit look vector of the cast, for the landing-splash check. The
+/// unit look vector of the cast, for the bite check. The
 /// mod's own uses never come through here — they go out as packets —
 /// so they are never mistaken for the player's.
 pub fn note_player_use(reeling: bool, origin: [f64; 3], dir: [f64; 3]) {
@@ -484,7 +471,6 @@ pub fn note_player_use(reeling: bool, origin: [f64; 3], dir: [f64; 3]) {
         s.manual_reel = true;
         s.manual_reel_tick = s.tick;
         s.line_out = false;
-        s.anchor = None;
     } else {
         // A cast by hand: a session starts, and the pending recast (if
         // any) is cancelled — the player's cast replaces it. The line
@@ -497,13 +483,12 @@ pub fn note_player_use(reeling: bool, origin: [f64; 3], dir: [f64; 3]) {
         s.warned_no_rod = false;
         s.cast_origin = origin;
         s.cast_dir = dir;
-        s.anchor = None;
     }
 }
 
 /// A cast the mod itself sent (a recast): the adapter records where
-/// it went out from and in which direction, so the new bobber's
-/// landing splash can anchor it. Called only once the packet is out.
+/// it went out from and in which direction, so a later splash can be
+/// checked against it. Called only once the packet is out.
 pub fn note_cast(origin: [f64; 3], dir: [f64; 3]) {
     let mut s = state();
     if !s.session {
@@ -511,7 +496,6 @@ pub fn note_cast(origin: [f64; 3], dir: [f64; 3]) {
     }
     s.cast_origin = origin;
     s.cast_dir = dir;
-    s.anchor = None;
 }
 
 /// Whether the engine believes the line is out. The adapter reads this
@@ -524,18 +508,18 @@ pub fn line_out() -> bool {
 /// A splash at `position` (the bobber's splash sound, heard through
 /// the adapter's sound hook). The mod API has no client read of the
 /// bobber, so the sound cannot prove whose bobber made it — instead
-/// the first splash after a cast anchors the bobber, and only a later
-/// splash near that anchor counts as a bite:
+/// the splash is checked against this session's own cast:
 ///
-/// - with no anchor yet, a splash within the anchor window that lands
-///   within range and inside the cast-direction cone is taken as this
-///   bobber's landing, and becomes the anchor; anything else is
-///   ignored, so a splash from another fisher's bobber nearby does
-///   not reel this line;
-/// - with an anchor, a splash counts as a bite only within a few
-///   blocks of the anchor and at least 100 ticks after the landing.
-///   No anchor, no bite — there is no fall back to accepting any
-///   splash in range.
+/// - at least 100 ticks after the cast (a real bite cannot come
+///   sooner: the bobber takes a few ticks to land and the lure
+///   waits at least 100 ticks after that);
+/// - within range of where the player cast from, and inside the
+///   cast-direction cone (the bobber lands along the cast ray).
+///
+/// A splash that fails any of those is ignored, so a splash from
+/// another fisher's bobber — behind the player, off to the side, or
+/// too soon after the cast — does not reel this line. No cast, no
+/// bite: without a cast on record there is nothing to check against.
 ///
 /// The tick consumes a bite once, so one splash reels once.
 pub fn note_bite(position: [f64; 3]) {
@@ -546,54 +530,34 @@ pub fn note_bite(position: [f64; 3]) {
     if s.phase != Phase::Waiting {
         return;
     }
-    match s.anchor {
-        None => {
-            // No anchor yet: only a splash soon after the cast, in
-            // range and in the cast direction, can be this bobber
-            // landing.
-            if s.tick - s.last_cast_tick > ANCHOR_WINDOW_TICKS {
+    // Too soon after the cast to be this line's bite.
+    if s.tick - s.last_cast_tick < BITE_EARLIEST_TICKS {
+        return;
+    }
+    let dx = position[0] - s.cast_origin[0];
+    let dy = position[1] - s.cast_origin[1];
+    let dz = position[2] - s.cast_origin[2];
+    if dx * dx + dy * dy + dz * dz > CAST_RANGE * CAST_RANGE {
+        return;
+    }
+    if dy > 3.0 {
+        return;
+    }
+    // The cone, on the horizontal plane: a splash almost straight
+    // below the cast needs no direction.
+    let hx = dx;
+    let hz = dz;
+    let hlen = (hx * hx + hz * hz).sqrt();
+    if hlen >= 1.0 {
+        let dir_h = (s.cast_dir[0] * s.cast_dir[0] + s.cast_dir[2] * s.cast_dir[2]).sqrt();
+        if dir_h > 0.0 {
+            let cos = (hx * s.cast_dir[0] + hz * s.cast_dir[2]) / (hlen * dir_h);
+            if cos < CAST_CONE_COS {
                 return;
-            }
-            let dx = position[0] - s.cast_origin[0];
-            let dy = position[1] - s.cast_origin[1];
-            let dz = position[2] - s.cast_origin[2];
-            if dx * dx + dy * dy + dz * dz > CAST_RANGE * CAST_RANGE {
-                return;
-            }
-            if dy > 3.0 {
-                return;
-            }
-            // The cone, on the horizontal plane: a splash almost
-            // straight below the cast needs no direction.
-            let hx = dx;
-            let hz = dz;
-            let hlen = (hx * hx + hz * hz).sqrt();
-            if hlen >= 1.0 {
-                let dir_h = (s.cast_dir[0] * s.cast_dir[0]
-                    + s.cast_dir[2] * s.cast_dir[2])
-                    .sqrt();
-                if dir_h > 0.0 {
-                    let cos = (hx * s.cast_dir[0] + hz * s.cast_dir[2]) / (hlen * dir_h);
-                    if cos < CAST_CONE_COS {
-                        return;
-                    }
-                }
-            }
-            s.anchor = Some(position);
-            s.anchor_tick = s.tick;
-        }
-        Some(anchor) => {
-            if s.tick - s.anchor_tick < BITE_EARLIEST_TICKS {
-                return;
-            }
-            let dx = position[0] - anchor[0];
-            let dy = position[1] - anchor[1];
-            let dz = position[2] - anchor[2];
-            if dx * dx + dy * dy + dz * dz <= ANCHOR_RADIUS * ANCHOR_RADIUS {
-                s.pending_bite = true;
             }
         }
     }
+    s.pending_bite = true;
 }
 
 /// A cast the adapter could not send (the rod swap or the slot change
@@ -606,7 +570,6 @@ pub fn cast_failed() {
         return;
     }
     s.line_out = false;
-    s.anchor = None;
     let delay = s.config.recast_delay;
     let due = s.tick + s.jittered(delay);
     s.phase = Phase::Recast { due };
@@ -631,9 +594,6 @@ fn cast_for_recast(s: &mut State, snap: &Snapshot) -> TickOut {
             s.phase = Phase::Waiting;
             s.waiting_since = s.tick;
             s.warned_no_rod = false;
-            // The old anchor belongs to the old bobber; the new cast
-            // earns its own from its landing splash.
-            s.anchor = None;
         }
         None => {
             // No usable rod: wait out another recast delay, then try again.
@@ -654,9 +614,6 @@ fn cast_for_recast(s: &mut State, snap: &Snapshot) -> TickOut {
 
 /// Reel in on the bite, after the catch delay if there is one.
 fn on_bite(s: &mut State, out: &mut TickOut) {
-    // The bite is reeled in, so the bobber is gone: the anchor dies
-    // with it, and the next cast earns a fresh one.
-    s.anchor = None;
     if s.config.catch_delay == 0 {
         *out = TickOut::use_now(s);
         s.line_out = false;
@@ -682,7 +639,6 @@ pub fn tick(snap: Snapshot) -> TickOut {
         s.pending_bite = false;
         s.warned_no_rod = false;
         s.manual_reel = false;
-        s.anchor = None;
         return out;
     }
     // A noted manual reel-in that never took effect was not a reel
@@ -851,7 +807,6 @@ pub fn command(line: &str) -> Option<CommandOut> {
                 s.session = false;
                 s.line_out = false;
                 s.manual_reel = false;
-                s.anchor = None;
             }
             s.queue_config();
             out.lines.push(format!(
@@ -1032,7 +987,6 @@ pub fn settings_click(button: usize) {
                 s.session = false;
                 s.line_out = false;
                 s.manual_reel = false;
-                s.anchor = None;
             }
         }
         1 => s.config.mode = if s.config.mode >= 4 { 1 } else { s.config.mode + 1 },
@@ -1128,16 +1082,10 @@ mod tests {
         assert!(state().session);
     }
 
-    /// The bobber's landing splash: sets the anchor.
-    fn land() {
-        note_bite(LAND);
-        assert_eq!(state().anchor, Some(LAND));
-    }
-
-    /// Hear the bite's splash (anchored, after the 100-tick wait) and
-    /// run one tick, returning its output.
+    /// Hear the bite's splash (at the landing spot, after the
+    /// 100-tick wait from the cast) and run one tick, returning its
+    /// output. No landing splash is heard first: none exists.
     fn hear_bite(held: Option<Rod>) -> TickOut {
-        land();
         wait_ticks(105, held);
         note_bite(LAND);
         tick(snap(held))
@@ -1192,43 +1140,43 @@ mod tests {
         assert!(hear_bite(Some(rod(0))).use_rod);
     }
 
-    /// Hear the bite's splash when the anchor is already set (no new
-    /// landing splash), and run one tick.
-    fn hear_bite_no_land(held: Option<Rod>) -> TickOut {
+    /// Hear the bite's splash after the 100-tick wait from the cast,
+    /// and run one tick.
+    fn hear_bite_after_wait(held: Option<Rod>) -> TickOut {
         wait_ticks(105, held);
         note_bite(LAND);
         tick(snap(held))
     }
 
     #[test]
-    fn bite_before_100_ticks_after_landing_is_ignored() {
+    fn bite_before_100_ticks_after_cast_is_ignored() {
         reset();
         set_mode(1);
         set_delay(0);
         no_jitter();
         manual_cast(Some(rod(0)));
-        land();
-        // A splash near the anchor too soon is not a bite yet.
+        // A splash at the landing spot too soon after the cast is
+        // not a bite yet.
         wait_ticks(50, Some(rod(0)));
         note_bite(LAND);
         assert!(!tick(snap(Some(rod(0)))).use_rod);
-        // 100 ticks after the landing, the same splash reels.
+        // 100 ticks after the cast, the same splash reels.
         wait_ticks(55, Some(rod(0)));
         note_bite(LAND);
         assert!(tick(snap(Some(rod(0)))).use_rod);
     }
 
     #[test]
-    fn bite_far_from_anchor_is_ignored() {
+    fn bite_off_the_cast_line_is_ignored() {
         reset();
         set_mode(1);
         set_delay(0);
         no_jitter();
         manual_cast(Some(rod(0)));
-        land();
         wait_ticks(105, Some(rod(0)));
-        // Another bobber splashing 10 blocks away: not this line.
-        note_bite([0.0, 64.0, 20.0]);
+        // Another bobber splashing 10 blocks to the side, off the
+        // cast line: not this line.
+        note_bite([10.0, 64.0, 10.0]);
         assert!(!tick(snap(Some(rod(0)))).use_rod);
         assert!(state().session);
         // This bobber's own splash still reels.
@@ -1237,60 +1185,59 @@ mod tests {
     }
 
     #[test]
-    fn anchor_candidate_outside_the_cone_is_ignored() {
+    fn bite_beyond_cast_range_is_ignored() {
         reset();
         set_mode(1);
         set_delay(0);
         no_jitter();
         manual_cast(Some(rod(0)));
-        // A splash off to the side, 90 degrees from the cast: not
-        // this bobber landing, so no anchor is set.
-        note_bite([10.0, 64.0, 0.0]);
-        assert_eq!(state().anchor, None);
-        // And with no anchor, no bite is ever accepted.
         wait_ticks(105, Some(rod(0)));
-        note_bite(LAND);
+        // A splash 40 blocks out, past the cast's range: not this line.
+        note_bite([0.0, 64.0, 40.0]);
         assert!(!tick(snap(Some(rod(0)))).use_rod);
         assert!(state().session);
+        // This bobber's own splash still reels.
+        note_bite(LAND);
+        assert!(tick(snap(Some(rod(0)))).use_rod);
     }
 
     #[test]
-    fn first_splash_after_the_anchor_window_sets_no_anchor() {
+    fn first_bite_after_the_cast_reels_without_a_landing_splash() {
         reset();
         set_mode(1);
         set_delay(0);
         no_jitter();
         manual_cast(Some(rod(0)));
-        // The first splash arrives 105 ticks after the cast: too late
-        // to be the landing, so it sets no anchor and reels nothing.
+        // No landing splash is ever heard — none exists — and the
+        // first splash, 105 ticks after the cast at the landing
+        // spot, still reels. (1.0.1 needed that splash to anchor
+        // first, so it missed the bite.)
         wait_ticks(105, Some(rod(0)));
         note_bite(LAND);
-        assert_eq!(state().anchor, None);
-        assert!(!tick(snap(Some(rod(0)))).use_rod);
-        assert!(state().session);
+        assert!(tick(snap(Some(rod(0)))).use_rod);
     }
 
     #[test]
-    fn anchor_cleared_on_reel_recast_and_manual_reel() {
+    fn recast_re_anchors_on_the_new_cast() {
         reset();
         set_mode(1);
         set_delay(0);
         no_jitter();
         manual_cast(Some(rod(0)));
-        land();
-        // Reel on the bite: the bite clears the anchor (the bobber is
-        // gone with the catch).
-        assert!(hear_bite_no_land(Some(rod(0))).use_rod);
-        assert_eq!(state().anchor, None);
-        // The recast goes out, then a splash at the old spot only
-        // anchors the new bobber — it does not reel.
+        // Reel on the bite.
+        assert!(hear_bite_after_wait(Some(rod(0))).use_rod);
+        // The recast goes out, and a splash at the old spot too soon
+        // after the new cast does not reel.
         assert!(tick(snap(Some(rod(0)))).use_rod);
         note_bite(LAND);
         assert!(!tick(snap(Some(rod(0)))).use_rod);
-        assert_eq!(state().anchor, Some(LAND));
-        // Manual reel clears the anchor too (and ends the session).
+        // 100 ticks after the recast, the same splash reels.
+        wait_ticks(105, Some(rod(0)));
+        note_bite(LAND);
+        assert!(tick(snap(Some(rod(0)))).use_rod);
+        // The recast goes out, then a manual reel ends the session.
+        assert!(tick(snap(Some(rod(0)))).use_rod);
         note_player_use(true, ORIGIN, DIR);
-        assert_eq!(state().anchor, None);
         assert!(!tick(snap(Some(rod(0)))).use_rod);
         assert!(!state().session);
     }
@@ -1323,7 +1270,6 @@ mod tests {
         state().config.catch_delay = 2;
         no_jitter();
         manual_cast(Some(rod(0)));
-        land();
         wait_ticks(105, Some(rod(0)));
         // Bite: the catch delay starts counting.
         note_bite(LAND);
@@ -1375,19 +1321,19 @@ mod tests {
     }
 
     #[test]
-    fn splash_right_after_a_cast_is_the_landing_not_a_bite() {
+    fn splash_right_after_a_cast_is_not_a_bite() {
         reset();
         set_mode(1);
         set_delay(0);
         no_jitter();
         manual_cast(Some(rod(0)));
-        // A splash in the first ticks after the cast is the bobber
-        // landing: it anchors the bobber, it does not reel.
-        land();
+        // A splash in the first ticks after the cast cannot be this
+        // line's bite yet: it is ignored, and the session keeps going.
+        note_bite(LAND);
         assert!(!tick(snap(Some(rod(0)))).use_rod);
         assert!(state().session);
-        // The bite, heard 100 ticks after the landing, reels.
-        assert!(hear_bite_no_land(Some(rod(0))).use_rod);
+        // The bite, heard 100 ticks after the cast, reels.
+        assert!(hear_bite_after_wait(Some(rod(0))).use_rod);
     }
 
     #[test]
@@ -1438,7 +1384,6 @@ mod tests {
         // bite is reeled with it, then the recast swaps to the fresh rod.
         note_player_use(false, ORIGIN, DIR);
         tick(snap(Some(rod(59))));
-        land();
         wait_ticks(105, Some(rod(59)));
         note_bite(LAND);
         assert!(tick(snap(Some(rod(59)))).use_rod);
@@ -1461,7 +1406,6 @@ mod tests {
         s.selected = 0;
         note_player_use(false, ORIGIN, DIR);
         tick(snap(Some(rod(59))));
-        land();
         wait_ticks(105, Some(rod(59)));
         note_bite(LAND);
         assert!(tick(snap(Some(rod(59)))).use_rod);
@@ -1486,7 +1430,6 @@ mod tests {
         s.selected = 0;
         note_player_use(false, ORIGIN, DIR);
         tick(snap(Some(rod(59))));
-        land();
         wait_ticks(105, Some(rod(59)));
         note_bite(LAND);
         tick(snap(Some(rod(59))));
@@ -1515,7 +1458,6 @@ mod tests {
         state().config.catch_delay = 2;
         no_jitter();
         manual_cast(Some(rod(0)));
-        land();
         wait_ticks(105, Some(rod(0)));
         note_bite(LAND);
         assert!(!tick(snap(Some(rod(0)))).use_rod);

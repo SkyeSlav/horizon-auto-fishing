@@ -10,7 +10,7 @@
 
 Auto fishing for Horizon/Starling: you cast first, and the mod reels in on the bite and casts again. Idea inspired by Simple Auto Fishing, Auto Fishing + and Auto Fisher Pro — a clean-room Rust reimplementation, no code copied.
 
-> **Releases:** grab the ready-built file from the [latest release](https://github.com/SkyeSlav/horizon-auto-fishing/releases/latest) — no build needed. `auto-fishing-1.0.1.hmod` is for Starling 0.9.0 and the Horizon launcher. The `.hnmod` (Starling 0.8.0) build was discontinued.
+> **Releases:** grab the ready-built file from the [latest release](https://github.com/SkyeSlav/horizon-auto-fishing/releases/latest) — no build needed. `auto-fishing-1.0.2.hmod` is for Starling 0.9.0 and the Horizon launcher. The `.hnmod` (Starling 0.8.0) build was discontinued.
 
 - **You cast first** — the mod never casts on its own. Cast by hand and it takes over: reel in on the bite, then cast again after the recast delay (default 17 ticks). Reel in by hand and it stops until you cast again.
 - **Human-like delays** — every delay gets a small random extra (up to 5 ticks by default), so no two fishing cycles are exactly alike.
@@ -23,9 +23,9 @@ Works on servers. Some servers treat auto-fishing as cheating — their rules ap
 
 ## Install
 
-### Horizon launcher (`.hmod`, 1.0.1)
+### Horizon launcher (`.hmod`, 1.0.2)
 
-Put `auto-fishing-1.0.1.hmod` (the release file) in the instance's
+Put `auto-fishing-1.0.2.hmod` (the release file) in the instance's
 `horizon-mods/` folder and add `mod.auto_fishing:true` to
 `horizon-mods.txt` in the same game folder — or run
 `horizon-launcher native-build hmod --instance "<instance>" --trust-native-code`.
@@ -66,12 +66,12 @@ The settings page (Options > Mods > Auto Fishing) has the toggle, the mode, the 
 
 ## To do
 
-- [ ] 1.0.1 on the registry — the submission is in and waiting on review.
+- [ ] 1.0.2 on the registry — the submission is in and waiting on review.
 - [ ] Reel on the mod's own bite instead of the splash sound — needs a bobber read in the mod API ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it.
 
 ## Layout
 
-- `hmod/`: the 1.0.1 native `.hmod` (Rust crate on the mod API) — the same engine, with the game-facing code in `src/lib.rs`.
+- `hmod/`: the 1.0.2 native `.hmod` (Rust crate on the mod API) — the same engine, with the game-facing code in `src/lib.rs`.
 - `horizon-registry.toml`: name, summary, description, authors and license for the registry entry.
 
 ## License

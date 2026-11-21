@@ -9,8 +9,11 @@
 //! - `play_level_sound_at_position` hears the bobber's splash and notes
 //!   it to the engine — the mod API has no client read of the bobber, so
 //!   the splash sound is the bite signal (the .hnmod reads a nibble flag
-//!   instead), and the engine anchors the bobber on its landing splash
-//!   so a nearby fisher's splash does not reel this line;
+//!   instead), and the engine checks the splash against the cast that
+//!   went out (in range, in the cast direction, at least 100 ticks
+//!   after it) so a nearby fisher's splash does not reel this line;
+//!   there is no landing splash to anchor on — the sound is the
+//!   bite's alone;
 //! - `right_click_item` notes the player's own casts and reels, so a
 //!   session starts only on a cast by hand and ends on a reel by hand;
 //! - `command` answers `/autofish`;
@@ -226,7 +229,7 @@ fn camera_pos(host: &dyn ClientHost) -> [f64; 3] {
 
 /// The look direction as a unit vector, from the camera's yaw and
 /// pitch (yaw 0 faces +Z, pitch positive looks down). Used for the
-/// landing-splash check: the bobber lands in the cast direction.
+/// bite check: the bobber lands in the cast direction.
 fn look_dir(host: &dyn ClientHost) -> [f64; 3] {
     let (yaw, pitch) = look(host);
     let (yaw, pitch) = (yaw.to_radians(), pitch.to_radians());
@@ -432,8 +435,8 @@ impl Hooks for Mod {
             if send_use_item(host, out.sequence, &self.send_failed) {
                 if out.cast_out {
                     // The recast went out: record where from and in
-                    // which direction, so its landing splash can
-                    // anchor the new bobber.
+                    // which direction, so a later splash can be
+                    // checked against the cast.
                     engine::note_cast(camera_pos(host), look_dir(host));
                 }
             } else {
@@ -472,10 +475,10 @@ impl Hooks for Mod {
         if *event.sound != splash {
             return Flow::Continue;
         }
-        // The engine decides whether this splash is this session's
-        // bobber landing (and becomes its anchor) or a bite near the
-        // anchor: a splash from another player's bobber is ignored
-        // either way.
+        // The engine decides whether this splash fits this session's
+        // cast (in range, in the cast direction, at least 100 ticks
+        // after it): a splash from another player's bobber is
+        // ignored.
         engine::note_bite(event.position);
         Flow::Continue
     }
@@ -496,7 +499,7 @@ impl Hooks for Mod {
         // otherwise. The mod's own uses go out as packets, never
         // through here, so they are never mistaken for the player's.
         // The cast's origin and look direction go with it, for the
-        // landing-splash check.
+        // bite check.
         engine::note_player_use(engine::line_out(), camera_pos(host), look_dir(host));
         Flow::Continue
     }

@@ -1,8 +1,12 @@
 id = "auto_fishing"
 name = "Auto Fishing"
-version = "1.0.1"
+version = "1.0.2"
 description = "Reels in when a fish bites and casts again, with break protection, inventory rod swapping and human-like delays."
 authors = ["SkyeSlav"]
+license = "MIT"
+license_url = "https://github.com/SkyeSlav/horizon-auto-fishing/blob/main/LICENSE"
+homepage = "https://github.com/SkyeSlav/horizon-auto-fishing"
+issues = "https://github.com/SkyeSlav/horizon-auto-fishing/issues"
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.
 api = "0.2"
 side = "client"
