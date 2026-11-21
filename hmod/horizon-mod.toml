@@ -1,6 +1,6 @@
 id = "auto_fishing"
 name = "Auto Fishing"
-version = "1.0.0"
+version = "1.0.1"
 description = "Reels in when a fish bites and casts again, with break protection, inventory rod swapping and human-like delays."
 authors = ["SkyeSlav"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins, beside data/ and assets/.

@@ -10,7 +10,7 @@ on:
       tag:
         description: "Release tag to attach the build to"
         required: true
-        default: "v1.0.0"
+        default: "v1.0.1"
   push:
     tags: ["v*"]
 
@@ -41,7 +41,7 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           body: |
-            1.0.0 is the `.hmod` for Starling 0.9.0 and the Horizon launcher: you cast first by hand, and the mod reels in on the bite and casts again. It hears the bite's splash sound. `/autofish` is declared to the chat tree, so it colours and completes instead of showing red while typing.
+            1.0.1 is the `.hmod` for Starling 0.9.0 and the Horizon launcher: you cast first by hand, and the mod reels in on the bite and casts again. The bite now anchors on the bobber's landing splash — only a splash near where your bobber landed counts, so a nearby fisher's splash no longer reels your line — and no bite is accepted in the first 100 ticks after the landing.
 
-            Horizon launcher users: take `auto-fishing-1.0.0.hmod`. The `.hnmod` asset below is the old Starling 0.8.0 build, discontinued.
+            Horizon launcher users: take `auto-fishing-1.0.1.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
           files: hmod/target/horizon-mod/*.hmod

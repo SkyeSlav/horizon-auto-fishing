@@ -7,9 +7,10 @@
 //!   rod swaps and junk throws through menu clicks, reel-in/recast
 //!   through a raw `UseItem` packet;
 //! - `play_level_sound_at_position` hears the bobber's splash and notes
-//!   the bite — the mod API has no client read of the bobber, so the
-//!   splash sound is the bite signal (the .hnmod reads a nibble flag
-//!   instead);
+//!   it to the engine — the mod API has no client read of the bobber, so
+//!   the splash sound is the bite signal (the .hnmod reads a nibble flag
+//!   instead), and the engine anchors the bobber on its landing splash
+//!   so a nearby fisher's splash does not reel this line;
 //! - `right_click_item` notes the player's own casts and reels, so a
 //!   session starts only on a cast by hand and ends on a reel by hand;
 //! - `command` answers `/autofish`;
@@ -52,10 +53,6 @@ const JUNK_FILE: &str = "junk";
 /// (crafting result, grid and armour, then the main inventory and the
 /// hotbar).
 const INVENTORY_MENU_SLOTS: usize = 46;
-
-/// A splash heard farther than this from the player is another
-/// player's bobber, not this session's bite.
-const BITE_SOUND_RANGE: f64 = 48.0;
 
 /// The `UseItem` packet's hand: the main hand.
 const MAIN_HAND: u32 = 0;
@@ -218,6 +215,26 @@ fn look(host: &dyn ClientHost) -> (f32, f32) {
         return (0.0, 0.0);
     };
     (rotation[0], rotation[1])
+}
+
+/// The camera's position; (0, 0, 0) when it cannot be read.
+fn camera_pos(host: &dyn ClientHost) -> [f64; 3] {
+    host.camera_entity()
+        .and_then(|camera| camera.position(&*host))
+        .unwrap_or([0.0; 3])
+}
+
+/// The look direction as a unit vector, from the camera's yaw and
+/// pitch (yaw 0 faces +Z, pitch positive looks down). Used for the
+/// landing-splash check: the bobber lands in the cast direction.
+fn look_dir(host: &dyn ClientHost) -> [f64; 3] {
+    let (yaw, pitch) = look(host);
+    let (yaw, pitch) = (yaw.to_radians(), pitch.to_radians());
+    [
+        (-yaw.sin() * pitch.cos()) as f64,
+        (-pitch.sin()) as f64,
+        (yaw.cos() * pitch.cos()) as f64,
+    ]
 }
 
 /// A Minecraft protocol VarInt (LEB128, seven bits a byte).
@@ -411,8 +428,17 @@ impl Hooks for Mod {
                 }
             }
         }
-        if !failed && out.use_rod && !send_use_item(host, out.sequence, &self.send_failed) {
-            failed = true;
+        if !failed && out.use_rod {
+            if send_use_item(host, out.sequence, &self.send_failed) {
+                if out.cast_out {
+                    // The recast went out: record where from and in
+                    // which direction, so its landing splash can
+                    // anchor the new bobber.
+                    engine::note_cast(camera_pos(host), look_dir(host));
+                }
+            } else {
+                failed = true;
+            }
         }
         if failed && out.use_rod {
             // The cast never went out: try again after the recast delay
@@ -446,19 +472,11 @@ impl Hooks for Mod {
         if *event.sound != splash {
             return Flow::Continue;
         }
-        // Another player's bobber splashes too: only a splash near the
-        // player can be this session's bite.
-        if let Some(camera) = host.camera_entity() {
-            if let Some(at) = camera.position(&*host) {
-                let dx = event.position[0] - at[0];
-                let dy = event.position[1] - at[1];
-                let dz = event.position[2] - at[2];
-                if dx * dx + dy * dy + dz * dz > BITE_SOUND_RANGE * BITE_SOUND_RANGE {
-                    return Flow::Continue;
-                }
-            }
-        }
-        engine::note_bite();
+        // The engine decides whether this splash is this session's
+        // bobber landing (and becomes its anchor) or a bite near the
+        // anchor: a splash from another player's bobber is ignored
+        // either way.
+        engine::note_bite(event.position);
         Flow::Continue
     }
 
@@ -477,7 +495,9 @@ impl Hooks for Mod {
         // The player's own use: a reel when the line is out, a cast
         // otherwise. The mod's own uses go out as packets, never
         // through here, so they are never mistaken for the player's.
-        engine::note_player_use(engine::line_out());
+        // The cast's origin and look direction go with it, for the
+        // landing-splash check.
+        engine::note_player_use(engine::line_out(), camera_pos(host), look_dir(host));
         Flow::Continue
     }
 
