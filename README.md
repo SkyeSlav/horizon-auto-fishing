@@ -66,7 +66,7 @@ The settings page (Options > Mods > Auto Fishing) has the toggle, the mode, the 
 
 ## Layout
 
-- `hmod/`: the 1.0.0 native `.hmod` (Rust crate on the mod API) — the same engine, with the hooks in `src/lib.rs`.
+- `hmod/`: the 1.0.0 native `.hmod` (Rust crate on the mod API) — the same engine, with the game-facing code in `src/lib.rs`.
 - `horizon-registry.toml`: name, summary, description, authors and license for the registry entry.
 
 ## License
