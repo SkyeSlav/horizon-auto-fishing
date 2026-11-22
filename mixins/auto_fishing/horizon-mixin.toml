@@ -1,6 +1,6 @@
 [mod]
 id = "auto_fishing"
-version = "1.0.0"
+version = "1.0.3"
 priority = 100
 
 # Pinned: the mod reads the game's own fishing state and sends the rod's

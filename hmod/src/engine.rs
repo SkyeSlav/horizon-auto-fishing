@@ -36,8 +36,8 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub const ID: &str = "auto_fishing";
 pub const NAME: &str = "Auto Fishing";
-pub const VERSION: &str = "1.0.2";
-pub const DESCRIPTION: &str = "Reels in when a fish bites and casts again, with break protection, inventory rod swapping and human-like delays.";
+pub const VERSION: &str = "1.0.3";
+pub const DESCRIPTION: &str = "Automates fishing input: reels in on the bite and casts again, with break protection, inventory rod swapping and random delays. Many servers forbid automated fishing — check the rules first.";
 
 /// Recast-delay choices the settings page cycles through, in ticks.
 const RECAST_DELAYS: [u64; 7] = [0, 5, 10, 17, 25, 40, 60];
@@ -386,7 +386,7 @@ impl State {
         }
     }
 
-    /// A delay with the human-like jitter: base plus a random 0..=max.
+    /// A delay with random jitter: base plus a random 0..=max.
     fn jittered(&mut self, base: u64) -> u64 {
         if !self.config.jitter_enabled || self.config.jitter_max == 0 {
             return base;
@@ -754,7 +754,7 @@ const HELP: &[&str] = &[
     "/autofish delay <ticks> - wait before recasting after a catch (0-100, default 17)",
     "/autofish catch <ticks> - wait after the bite before reeling in (0-20, default 0)",
     "/autofish jitter <ticks> - random extra delay, up to N ticks (0-20, default 5)",
-    "/autofish jitter on/off - human-like delays on/off",
+    "/autofish jitter on/off - random delays on/off",
     "/autofish junk on/off - throw away listed junk (default off)",
     "/autofish junk add <item> / remove <item> / list / clear / preset - manage the junk list",
     "/autofish status - mode, delays, junk, whether a session is running",

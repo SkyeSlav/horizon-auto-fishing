@@ -10,7 +10,7 @@ on:
       tag:
         description: "Release tag to attach the build to"
         required: true
-        default: "v1.0.2"
+        default: "v1.0.3"
   push:
     tags: ["v*"]
 
@@ -41,7 +41,7 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           body: |
-            1.0.2 is the `.hmod` for Starling 0.9.0 and the Horizon launcher: you cast first by hand, and the mod reels in on the bite and casts again. The bite is now checked against the cast itself — in range, in the cast direction, at least 100 ticks after the cast — because there is no landing splash to anchor on: neither the engine nor a server plays one when a bobber enters the water, so 1.0.1's anchor could never be set and it missed the bite. 1.0.2 also declares its MIT license.
+            1.0.3 ships the MIT LICENSE file inside the `.hmod`, fixes the version mismatch (Cargo.toml said 0.1.0), and rewrites the description to say plainly that it automates fishing input — many servers forbid AFK/automated fishing, so check the rules first. Bite detection is unchanged from 1.0.2 (checked against the cast itself).
 
-            Horizon launcher users: take `auto-fishing-1.0.2.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
+            Horizon launcher users: take `auto-fishing-1.0.3.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
           files: hmod/target/horizon-mod/*.hmod
