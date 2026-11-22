@@ -19,7 +19,7 @@ Auto fishing for Horizon/Starling: you cast first, and the mod reels in on the b
 - **Bobber-killed recast** — if the server kills the bobber, the rod is cast again after the delay.
 - **Junk filter** — off by default, with an empty list. It only throws away items you list and turn on.
 
-This mod automates fishing input: it sends the reel and cast inputs for you, and swaps rods and throws junk with inventory clicks. Many servers forbid AFK or automated fishing, or flag it with an anticheat — using it can get you banned. Check the server's rules first.
+> **Disclaimer — use at your own risk.** This mod automates fishing input: it sends the reel and cast inputs for you, and swaps rods and throws junk with inventory clicks. Many servers forbid AFK or automated fishing, or flag it with an anticheat — using it can get you banned. Check the server's rules before you use it. The developer is not responsible for bans, lost items, or anything else that happens on a server where you use it.
 
 ## Install
 
