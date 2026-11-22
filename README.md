@@ -66,8 +66,8 @@ The settings page (Options > Mods > Auto Fishing) has the toggle, the mode, the 
 
 ## To do
 
-- [ ] 1.0.3 on the registry — the submission is in and waiting on review.
-- [ ] Reel on the mod's own bite instead of the splash sound — needs a bobber read in the mod API ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it.
+- [x] 1.0.3 on the registry — merged and live.
+- [ ] 1.0.4, built once the upstream bite read lands — reel on the mod's own bite instead of the splash sound ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it. Bundled with it: rename "Human-like delays" to "Random delays", disclose that the junk filter throws whole stacks, and fix the packaged lock version (verify it inside the built file before release).
 
 ## Layout
 
