@@ -36,7 +36,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub const ID: &str = "auto_fishing";
 pub const NAME: &str = "Auto Fishing";
-pub const VERSION: &str = "1.0.5";
+pub const VERSION: &str = "1.1.0";
 pub const DESCRIPTION: &str = "Automates fishing input: reels in on the bite and casts again, with break protection, inventory rod swapping and random delays. Many servers forbid automated fishing — check the rules first.";
 
 /// Recast-delay choices the settings page cycles through, in ticks.
