@@ -10,22 +10,22 @@
 
 Auto fishing for Horizon/Starling: you cast first, and the mod reels in on the bite and casts again. Idea inspired by Simple Auto Fishing, Auto Fishing + and Auto Fisher Pro — a clean-room Rust reimplementation, no code copied.
 
-> **Releases:** grab the ready-built file from the [latest release](https://github.com/SkyeSlav/horizon-auto-fishing/releases/latest) — no build needed. `auto-fishing-1.0.3.hmod` is for Starling 0.9.0 and the Horizon launcher. The `.hnmod` (Starling 0.8.0) build was discontinued.
+> **Releases:** grab the ready-built file from the [latest release](https://github.com/SkyeSlav/horizon-auto-fishing/releases/latest) — no build needed. `auto-fishing-1.0.4.hmod` is for Starling 0.9.0 and the Horizon launcher. The `.hnmod` (Starling 0.8.0) build was discontinued.
 
 - **You cast first** — the mod never casts on its own. Cast by hand and it takes over: reel in on the bite, then cast again after the recast delay (default 17 ticks). Reel in by hand and it stops until you cast again.
 - **Random delays** — every delay gets a small random extra (up to 5 ticks by default).
-- **Break protection** — a rod is not used once 5 or fewer durability remain.
+- **Break protection** — a rod is not used once the protect-at threshold (default 5) or fewer durability remain. Set it to 1 to fish a rod down to its last durability.
 - **Rod swapping** — in the all-rods modes, a worn-out rod is swapped for the freshest rod in your hotbar or inventory.
 - **Bobber-killed recast** — if the server kills the bobber, the rod is cast again after the delay.
-- **Junk filter** — off by default, with an empty list. It only throws away items you list and turn on.
+- **Junk filter** — off by default, with an empty list. It only throws away items you list and turn on — whole stacks, one stack per tick.
 
-> **Disclaimer — use at your own risk.** This mod automates fishing input: it sends the reel and cast inputs for you, and swaps rods and throws junk with inventory clicks. Many servers forbid AFK or automated fishing, or flag it with an anticheat — using it can get you banned. Check the server's rules before you use it. The developer is not responsible for bans, lost items, or anything else that happens on a server where you use it.
+This mod automates fishing input: it sends the reel and cast inputs for you, and swaps rods and throws junk with inventory clicks. Many servers forbid AFK or automated fishing, or flag it with an anticheat — using it can get you banned. Check the server's rules first.
 
 ## Install
 
-### Horizon launcher (`.hmod`, 1.0.3)
+### Horizon launcher (`.hmod`, 1.0.4)
 
-Put `auto-fishing-1.0.3.hmod` (the release file) in the instance's
+Put `auto-fishing-1.0.4.hmod` (the release file) in the instance's
 `horizon-mods/` folder and add `mod.auto_fishing:true` to
 `horizon-mods.txt` in the same game folder — or run
 `horizon-launcher native-build hmod --instance "<instance>" --trust-native-code`.
@@ -48,6 +48,7 @@ cd hmod && cargo horizon-mod build   # target/horizon-mod/auto_fishing.hmod
 - `/autofish` — status.
 - `/autofish toggle` — turn auto fishing on/off.
 - `/autofish mode <1-4>` — 1 current rod, 2 + break protection, 3 all rods, 4 + break protection.
+- `/autofish protect <durability>` — swap/stop using a rod once this much durability remains (1–20, default 5).
 - `/autofish delay <ticks>` — wait before recasting after a catch (0–100, default 17).
 - `/autofish catch <ticks>` — wait after the bite before reeling in (0–20, default 0).
 - `/autofish jitter <ticks>` — random extra delay, up to N ticks (0–20, default 5).
@@ -61,17 +62,18 @@ The settings page (Options > Mods > Auto Fishing) has the toggle, the mode, the 
 ## How it works
 
 - A fishing session starts only when you cast by hand. From then on the mod reels in on the bite, and casts again after the delay, until you reel in by hand or turn the mod off.
-- If the rod you are holding is about to break, the mod swaps in the freshest usable rod it can find in your hotbar or inventory — in the all-rods modes — and never casts with a rod at 5 or fewer durability in the protected modes.
-- The junk filter throws away one listed item per tick, and only while it is on and the list is not empty — including when you are not fishing.
+- If the rod you are holding is about to break, the mod swaps in the freshest usable rod it can find in your hotbar or inventory — in the all-rods modes — and never casts with a rod at the protect-at threshold or fewer durability in the protected modes.
+- The junk filter throws away the whole stack of one listed item per tick, and only while it is on and the list is not empty — including when you are not fishing.
 
 ## To do
 
 - [x] 1.0.3 on the registry — merged and live.
-- [ ] 1.0.4, built once the upstream bite read lands — reel on the mod's own bite instead of the splash sound ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it. Bundled with it: rename "Human-like delays" to "Random delays", disclose that the junk filter throws whole stacks, and fix the packaged lock version (verify it inside the built file before release).
+- [x] 1.0.4 — mode as a named choice, configurable protect threshold, lost-bobber recast after 750 ticks, "Random delays" wording, whole-stack junk disclosure.
+- [ ] Reel on the mod's own bite instead of the splash sound — needs a bobber read in the mod API ([issue #19491](https://github.com/horizon-rust/horizon/issues/19491), [PR #19503](https://github.com/horizon-rust/horizon/pull/19503)), then a Starling release carrying it. That version will also use the bite read to notice a wiped bobber at once, instead of waiting out the lost-bobber timeout.
 
 ## Layout
 
-- `hmod/`: the 1.0.3 native `.hmod` (Rust crate on the mod API) — the same engine, with the game-facing code in `src/lib.rs`.
+- `hmod/`: the 1.0.4 native `.hmod` (Rust crate on the mod API) — the same engine, with the game-facing code in `src/lib.rs`.
 - `horizon-registry.toml`: name, summary, description, authors and license for the registry entry.
 
 ## License

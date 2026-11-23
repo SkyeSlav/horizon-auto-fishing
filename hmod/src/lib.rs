@@ -20,7 +20,7 @@
 //! - `register_client_commands` declares `/autofish` and its usages to
 //!   the chat tree, so typing it colours and completes like the game's
 //!   own commands instead of showing red as unknown;
-//! - `register` declares the seven settings on the mod's page;
+//! - `register` declares the eight settings on the mod's page;
 //! - `client_player_logging_in` resets the session per connection.
 //!
 //! The seven registered settings hold the values the settings page
@@ -40,9 +40,10 @@ mod engine;
 
 /// The settings the mod's page edits; the junk list lives in the
 /// `junk` data file, so the commands can still change it.
-const REGISTERED_SETTINGS: [&str; 7] = [
+const REGISTERED_SETTINGS: [&str; 8] = [
     "enabled",
     "mode",
+    "protect_at",
     "recast_delay",
     "catch_delay",
     "jitter_enabled",
@@ -89,7 +90,10 @@ fn load(host: &dyn ClientHost) {
         "enabled" => host.setting_bool(key).map(|b| b.to_string()),
         "jitter_enabled" => host.setting_bool(key).map(|b| b.to_string()),
         "junk_enabled" => host.setting_bool(key).map(|b| b.to_string()),
-        "mode" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
+        // The mode is a choice on the settings page: the host keeps
+        // the option index, and the engine's modes are index + 1.
+        "mode" => host.setting_choice(key).map(|i| format!("{}", i)),
+        "protect_at" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
         "recast_delay" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
         "catch_delay" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
         "jitter_max" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
@@ -375,7 +379,28 @@ fn do_drop(host: &mut dyn ClientHost, snap: &engine::Snapshot, slot: usize) -> b
 impl Hooks for Mod {
     fn register(&self, r: &mut dyn Registrar, _cx: &RegistrationContext) {
         let _ = r.register_setting(SettingSpec::toggle("enabled", "Auto Fishing", true));
-        let _ = r.register_setting(SettingSpec::range("mode", "Mode", 1.0, 4.0, 1.0, 2.0));
+        // The mode is a choice, not a slider: the page's button cycles
+        // the named modes, so the player can see what each one does.
+        // Default index 1 = mode 2, the previous default.
+        let _ = r.register_setting(SettingSpec::choice(
+            "mode",
+            "Mode",
+            [
+                "Current rod",
+                "Current rod + break protection",
+                "All rods",
+                "All rods + break protection",
+            ],
+            1,
+        ));
+        let _ = r.register_setting(SettingSpec::range(
+            "protect_at",
+            "Protect at",
+            1.0,
+            20.0,
+            1.0,
+            5.0,
+        ));
         let _ = r.register_setting(SettingSpec::range(
             "recast_delay",
             "Recast delay",
@@ -394,7 +419,7 @@ impl Hooks for Mod {
         ));
         let _ = r.register_setting(SettingSpec::toggle(
             "jitter_enabled",
-            "Human-like delays",
+            "Random delays",
             true,
         ));
         let _ = r.register_setting(SettingSpec::range(

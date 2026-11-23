@@ -10,7 +10,7 @@ on:
       tag:
         description: "Release tag to attach the build to"
         required: true
-        default: "v1.0.3"
+        default: "v1.0.4"
   push:
     tags: ["v*"]
 
@@ -41,7 +41,9 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           body: |
-            1.0.3 ships the MIT LICENSE file inside the `.hmod`, fixes the version mismatch (Cargo.toml said 0.1.0), and rewrites the description to say plainly that it automates fishing input — many servers forbid AFK/automated fishing, so check the rules first. Bite detection is unchanged from 1.0.2 (checked against the cast itself).
+            1.0.4: the mode is a named choice on the settings page instead of a bare 1–4 slider, break protection gets a configurable threshold (Protect at, 1–20, default 5 — set it to 1 to fish a rod down to its last durability), and a lost bobber is recast after 750 ticks instead of 1200. It also finishes the review follow-ups: "Human-like delays" is now "Random delays" everywhere, and the junk filter says plainly that it throws whole stacks. Bite detection is unchanged (checked against the cast itself).
 
-            Horizon launcher users: take `auto-fishing-1.0.3.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
+            Note: the mode setting changed from a slider to a choice, so a mode stored by 1.0.3 can read shifted on the first launch — check the mode name on the `/autofish` status line after updating.
+
+            Horizon launcher users: take `auto-fishing-1.0.4.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
           files: hmod/target/horizon-mod/*.hmod

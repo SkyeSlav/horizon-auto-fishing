@@ -36,7 +36,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub const ID: &str = "auto_fishing";
 pub const NAME: &str = "Auto Fishing";
-pub const VERSION: &str = "1.0.3";
+pub const VERSION: &str = "1.0.4";
 pub const DESCRIPTION: &str = "Automates fishing input: reels in on the bite and casts again, with break protection, inventory rod swapping and random delays. Many servers forbid automated fishing — check the rules first.";
 
 /// Recast-delay choices the settings page cycles through, in ticks.
@@ -45,10 +45,13 @@ const RECAST_DELAYS: [u64; 7] = [0, 5, 10, 17, 25, 40, 60];
 const CATCH_DELAYS: [u64; 5] = [0, 2, 5, 10, 20];
 /// Jitter-range choices the settings page cycles through, in ticks.
 const JITTER_MAXES: [u64; 5] = [0, 2, 5, 10, 20];
+/// Protect-at choices the settings page cycles through, in durability.
+const PROTECT_ATS: [u64; 6] = [1, 2, 3, 5, 10, 20];
 
 /// Settings keys, one file per key under the mod's data folder.
 const KEY_ENABLED: &str = "enabled";
 const KEY_MODE: &str = "mode";
+const KEY_PROTECT_AT: &str = "protect_at";
 const KEY_RECAST_DELAY: &str = "recast_delay";
 const KEY_CATCH_DELAY: &str = "catch_delay";
 const KEY_JITTER_ENABLED: &str = "jitter_enabled";
@@ -69,10 +72,12 @@ const MODE_NAMES: [&str; 4] = [
     "All hotbar rods + break protection",
 ];
 
-/// With break protection on, a rod is not used once 5 or fewer
-/// durability remain — it is swapped for a fresh rod (modes 3 and 4)
-/// or left alone (mode 2).
-const PROTECT_KEEP: i32 = 5;
+/// With break protection on, a rod is not used once the protect-at
+/// threshold (default 5) or fewer durability remain — it is swapped
+/// for a fresh rod (modes 3 and 4) or left alone (mode 2). The
+/// threshold is a setting, so the player can fish a rod down to its
+/// last durability.
+const PROTECT_AT_DEFAULT: u64 = 5;
 
 /// A bite counts only this many ticks after the cast: the bobber
 /// takes a few ticks to land and the lure's wait is 100-600 ticks,
@@ -91,8 +96,11 @@ const CAST_CONE_COS: f64 = 0.766; // cos(40 degrees)
 /// Waiting this long with no bite means the bobber is lost (the server
 /// killed it, or the cast never landed in water): cast again. The mod
 /// API has no bobber read on a client, so this wait is the only
-/// lost-bobber signal this build has.
-const WAITING_TIMEOUT: u64 = 1200;
+/// lost-bobber signal this build has. 750 ticks is past the longest
+/// real wait for a bite (lure wait 600 + hooked wait 80 = 680 ticks),
+/// so it never fires on a live bobber — and a wiped bobber is
+/// recast in ~37s instead of 60s.
+const WAITING_TIMEOUT: u64 = 750;
 /// A noted manual reel-in is forgotten if the line is still believed
 /// out this many ticks later (the use never reached the server).
 const MANUAL_REEL_TIMEOUT: u64 = 10;
@@ -102,9 +110,11 @@ const MANUAL_REEL_TIMEOUT: u64 = 10;
 pub struct Config {
     pub enabled: bool,
     pub mode: u8,
+    /// Swap/stop using a rod once this much durability remains.
+    pub protect_at: u64,
     pub recast_delay: u64,
     pub catch_delay: u64,
-    /// Human-like delays: each delay gets a random extra 0..=jitter_max ticks.
+    /// Random delays: each delay gets a random extra 0..=jitter_max ticks.
     pub jitter_enabled: bool,
     pub jitter_max: u64,
     /// Throw away listed junk items automatically (off by default).
@@ -117,6 +127,7 @@ impl Default for Config {
         Self {
             enabled: true,
             mode: 2,
+            protect_at: PROTECT_AT_DEFAULT,
             recast_delay: 17,
             catch_delay: 0,
             jitter_enabled: true,
@@ -154,7 +165,14 @@ impl Config {
         let num = |k: &str, default: u64| {
             get(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(default)
         };
-        let mode = num(KEY_MODE, d.mode as u64);
+        // The mode arrives as the settings page's choice index
+        // (0..3), not the mode number: the page's choice stores its
+        // option index, and the engine's modes are index + 1. A value
+        // stored by 1.0.3's slider (the mode number 1..4) therefore
+        // reads shifted on the first launch after the update — check
+        // the status line after updating.
+        let mode_idx = num(KEY_MODE, (d.mode - 1) as u64);
+        let protect_at = num(KEY_PROTECT_AT, d.protect_at);
         let junk = get(KEY_JUNK)
             .map(|v| {
                 v.split(',')
@@ -167,7 +185,16 @@ impl Config {
             .unwrap_or_default();
         Self {
             enabled: bool(KEY_ENABLED, d.enabled),
-            mode: if (1..=4).contains(&mode) { mode as u8 } else { d.mode },
+            mode: if mode_idx <= 3 {
+                mode_idx as u8 + 1
+            } else {
+                d.mode
+            },
+            protect_at: if (1..=20).contains(&protect_at) {
+                protect_at
+            } else {
+                d.protect_at
+            },
             recast_delay: num(KEY_RECAST_DELAY, d.recast_delay).min(100),
             catch_delay: num(KEY_CATCH_DELAY, d.catch_delay).min(20),
             jitter_enabled: bool(KEY_JITTER_ENABLED, d.jitter_enabled),
@@ -180,7 +207,10 @@ impl Config {
     fn stored(&self) -> Vec<(&'static str, String)> {
         vec![
             (KEY_ENABLED, self.enabled.to_string()),
-            (KEY_MODE, self.mode.to_string()),
+            // The choice index (mode - 1), so what the settings page
+            // reads back matches what the commands wrote.
+            (KEY_MODE, (self.mode - 1).to_string()),
+            (KEY_PROTECT_AT, self.protect_at.to_string()),
             (KEY_RECAST_DELAY, self.recast_delay.to_string()),
             (KEY_CATCH_DELAY, self.catch_delay.to_string()),
             (KEY_JITTER_ENABLED, self.jitter_enabled.to_string()),
@@ -195,12 +225,13 @@ impl Config {
         vec![
             format!("Auto Fishing: {}", if self.enabled { "On" } else { "Off" }),
             format!("Mode: {} - {}", self.mode, MODE_NAMES[(self.mode - 1) as usize]),
+            format!("Protect at: {} durability", self.protect_at),
             format!("Recast delay: {} ticks", self.recast_delay),
             format!("Catch delay: {} ticks", self.catch_delay),
             if self.jitter_enabled {
-                format!("Human-like delays: On (up to {} ticks)", self.jitter_max)
+                format!("Random delays: On (up to {} ticks)", self.jitter_max)
             } else {
-                "Human-like delays: Off".to_string()
+                "Random delays: Off".to_string()
             },
             format!("Jitter range: {} ticks", self.jitter_max),
             format!(
@@ -335,7 +366,8 @@ impl State {
     }
 
     /// Whether this rod may still be used under the current mode: with
-    /// break protection on, only while more than 5 durability remain.
+    /// break protection on, only while more than `protect_at`
+    /// durability remain.
     fn usable(&self, rod: Rod) -> bool {
         if rod.max_damage <= 0 {
             return true;
@@ -343,7 +375,7 @@ impl State {
         if rod.damage >= rod.max_damage {
             return false;
         }
-        !self.config.protect() || rod.damage + PROTECT_KEEP < rod.max_damage
+        !self.config.protect() || rod.damage + (self.config.protect_at as i32) < rod.max_damage
     }
 
     /// The least-damaged usable rod, hotbar first on a tie: (slot, from inventory).
@@ -700,9 +732,9 @@ pub fn tick(snap: Snapshot) -> TickOut {
             }
         }
     }
-    // The junk filter runs on its own, session or not: one item per
-    // tick from the first listed stack, never while a rod swap is
-    // happening this tick (one container action per tick).
+    // The junk filter runs on its own, session or not: one whole
+    // stack per tick from the first listed stack, never while a rod
+    // swap is happening this tick (one container action per tick).
     if out.swap.is_none()
         && s.config.junk_enabled
         && !s.config.junk.is_empty()
@@ -731,6 +763,7 @@ pub const COMMAND_USAGES: &[&str] = &[
     "autofish help",
     "autofish toggle",
     "autofish mode <mode:integer>",
+    "autofish protect <durability:integer>",
     "autofish delay <ticks:integer>",
     "autofish catch <ticks:integer>",
     "autofish jitter <ticks:integer>",
@@ -751,11 +784,12 @@ const HELP: &[&str] = &[
     "/autofish - status",
     "/autofish toggle - turn auto fishing on/off",
     "/autofish mode <1-4> - 1 current rod, 2 + break protection, 3 all hotbar + inventory rods, 4 + break protection",
+    "/autofish protect <durability> - swap/stop using a rod once this much durability remains (1-20, default 5)",
     "/autofish delay <ticks> - wait before recasting after a catch (0-100, default 17)",
     "/autofish catch <ticks> - wait after the bite before reeling in (0-20, default 0)",
     "/autofish jitter <ticks> - random extra delay, up to N ticks (0-20, default 5)",
     "/autofish jitter on/off - random delays on/off",
-    "/autofish junk on/off - throw away listed junk (default off)",
+    "/autofish junk on/off - throw away listed junk, whole stacks (default off)",
     "/autofish junk add <item> / remove <item> / list / clear / preset - manage the junk list",
     "/autofish status - mode, delays, junk, whether a session is running",
 ];
@@ -782,10 +816,11 @@ pub fn command(line: &str) -> Option<CommandOut> {
     match args.as_slice() {
         [] | ["status"] => {
             out.lines.push(format!(
-                "[AutoFish] {} - mode {} ({}), recast delay {} ticks, catch delay {} ticks, jitter {} (up to {} ticks), junk filter {} ({} items), {}",
+                "[AutoFish] {} - mode {} ({}), protect at {} durability, recast delay {} ticks, catch delay {} ticks, jitter {} (up to {} ticks), junk filter {} ({} items), {}",
                 on_off(s.config.enabled),
                 s.config.mode,
                 MODE_NAMES[(s.config.mode - 1) as usize],
+                s.config.protect_at,
                 s.config.recast_delay,
                 s.config.catch_delay,
                 on_off(s.config.jitter_enabled),
@@ -828,6 +863,18 @@ pub fn command(line: &str) -> Option<CommandOut> {
                     .to_string(),
             ),
         },
+        ["protect", n] => match n.parse::<u64>() {
+            Ok(d) if (1..=20).contains(&d) => {
+                s.config.protect_at = d;
+                s.queue_config();
+                out.lines.push(format!(
+                    "[AutoFish] Protect at: {d} durability remaining."
+                ));
+            }
+            _ => out.lines.push(
+                "[AutoFish] Protect at is 1-20 durability (default 5).".to_string(),
+            ),
+        },
         ["delay", n] => match n.parse::<u64>() {
             Ok(d) if d <= 100 => {
                 s.config.recast_delay = d;
@@ -852,12 +899,12 @@ pub fn command(line: &str) -> Option<CommandOut> {
             "on" => {
                 s.config.jitter_enabled = true;
                 s.queue_config();
-                out.lines.push("[AutoFish] Human-like delays on.".to_string());
+                out.lines.push("[AutoFish] Random delays on.".to_string());
             }
             "off" => {
                 s.config.jitter_enabled = false;
                 s.queue_config();
-                out.lines.push("[AutoFish] Human-like delays off.".to_string());
+                out.lines.push("[AutoFish] Random delays off.".to_string());
             }
             _ => match n.parse::<u64>() {
                 Ok(d) if d <= 20 => {
@@ -875,7 +922,7 @@ pub fn command(line: &str) -> Option<CommandOut> {
             s.config.jitter_enabled = !s.config.jitter_enabled;
             s.queue_config();
             out.lines.push(format!(
-                "[AutoFish] Human-like delays {}.",
+                "[AutoFish] Random delays {}.",
                 on_off(s.config.jitter_enabled)
             ));
         }
@@ -991,6 +1038,14 @@ pub fn settings_click(button: usize) {
         }
         1 => s.config.mode = if s.config.mode >= 4 { 1 } else { s.config.mode + 1 },
         2 => {
+            let cur = s.config.protect_at;
+            s.config.protect_at = PROTECT_ATS
+                .iter()
+                .find(|&&d| d > cur)
+                .copied()
+                .unwrap_or(PROTECT_ATS[0]);
+        }
+        3 => {
             let cur = s.config.recast_delay;
             s.config.recast_delay = RECAST_DELAYS
                 .iter()
@@ -998,7 +1053,7 @@ pub fn settings_click(button: usize) {
                 .copied()
                 .unwrap_or(RECAST_DELAYS[0]);
         }
-        3 => {
+        4 => {
             let cur = s.config.catch_delay;
             s.config.catch_delay = CATCH_DELAYS
                 .iter()
@@ -1006,8 +1061,8 @@ pub fn settings_click(button: usize) {
                 .copied()
                 .unwrap_or(CATCH_DELAYS[0]);
         }
-        4 => s.config.jitter_enabled = !s.config.jitter_enabled,
-        5 => {
+        5 => s.config.jitter_enabled = !s.config.jitter_enabled,
+        6 => {
             let cur = s.config.jitter_max;
             s.config.jitter_max = JITTER_MAXES
                 .iter()
@@ -1015,7 +1070,7 @@ pub fn settings_click(button: usize) {
                 .copied()
                 .unwrap_or(JITTER_MAXES[0]);
         }
-        6 => s.config.junk_enabled = !s.config.junk_enabled,
+        7 => s.config.junk_enabled = !s.config.junk_enabled,
         _ => return,
     }
     s.queue_config();
@@ -1252,7 +1307,30 @@ mod tests {
         // No bite for a long while: the bobber is lost, so the mod
         // recasts after the wait, and the session keeps going.
         let mut recast = false;
-        for _ in 0..1300 {
+        for _ in 0..800 {
+            if tick(snap(Some(rod(0)))).use_rod {
+                recast = true;
+                break;
+            }
+        }
+        assert!(recast);
+        assert!(state().session);
+    }
+
+    #[test]
+    fn lost_bobber_recasts_within_750_ticks() {
+        reset();
+        set_mode(1);
+        set_delay(0);
+        no_jitter();
+        manual_cast(Some(rod(0)));
+        // Nothing for 700 ticks: the bobber may still be out, and no
+        // recast may fire before the 750-tick lost-bobber wait ends.
+        assert!(!wait_ticks(700, Some(rod(0))).use_rod);
+        // The wait ends at 750 ticks: a recast follows, and the
+        // session keeps going.
+        let mut recast = false;
+        for _ in 0..60 {
             if tick(snap(Some(rod(0)))).use_rod {
                 recast = true;
                 break;
@@ -1351,6 +1429,37 @@ mod tests {
         set_delay(0);
         no_jitter();
         assert!(!tick(snap(Some(rod(59)))).use_rod);
+    }
+
+    #[test]
+    fn protect_threshold_is_configurable() {
+        reset();
+        set_mode(2);
+        set_delay(0);
+        no_jitter();
+        // Damage 59 of 64: 5 left — protected at the default 5, so no
+        // recast with the worn rod.
+        manual_cast(Some(rod(59)));
+        assert!(hear_bite(Some(rod(59))).use_rod);
+        assert!(!tick(snap(Some(rod(59)))).use_rod);
+        // Set the threshold to 1: the same rod is usable again.
+        command("/autofish protect 1").unwrap();
+        assert_eq!(state().config.protect_at, 1);
+        assert!(tick(snap(Some(rod(59)))).use_rod);
+        // But 1 durability left is still protected at 1.
+        reset();
+        set_mode(2);
+        set_delay(0);
+        no_jitter();
+        command("/autofish protect 1").unwrap();
+        manual_cast(Some(rod(63)));
+        assert!(hear_bite(Some(rod(63))).use_rod);
+        assert!(!tick(snap(Some(rod(63)))).use_rod);
+        // And 0 is refused, 21 is refused.
+        command("/autofish protect 0").unwrap();
+        assert_eq!(state().config.protect_at, 1);
+        command("/autofish protect 21").unwrap();
+        assert_eq!(state().config.protect_at, 1);
     }
 
     #[test]
@@ -1564,6 +1673,8 @@ mod tests {
         let out = command("/autofish mode 3").unwrap();
         assert_eq!(state().config.mode, 3);
         assert!(out.lines.iter().any(|l| l.contains("Mode 3")));
+        command("/autofish protect 1").unwrap();
+        assert_eq!(state().config.protect_at, 1);
         command("/autofish delay 25").unwrap();
         assert_eq!(state().config.recast_delay, 25);
         command("/autofish jitter 12").unwrap();
@@ -1592,6 +1703,7 @@ mod tests {
         for usage in COMMAND_USAGES {
             let sample = usage
                 .replace("<mode:integer>", "2")
+                .replace("<durability:integer>", "1")
                 .replace("<ticks:integer>", "5")
                 .replace("<state:word>", "on")
                 .replace("<item:word>", "minecraft:rotten_flesh");
@@ -1612,15 +1724,43 @@ mod tests {
         settings_click(1);
         assert_eq!(state().config.mode, 1);
         settings_click(2);
+        assert_eq!(state().config.protect_at, 10);
+        settings_click(3);
         assert_eq!(state().config.recast_delay, 25);
-        settings_click(4);
-        assert!(!state().config.jitter_enabled);
         settings_click(5);
-        assert_eq!(state().config.jitter_max, 10);
+        assert!(!state().config.jitter_enabled);
         settings_click(6);
+        assert_eq!(state().config.jitter_max, 10);
+        settings_click(7);
         assert!(state().config.junk_enabled);
         settings_click(0);
         assert!(!state().config.enabled);
+    }
+
+    #[test]
+    fn config_load_reads_mode_as_choice_index() {
+        reset();
+        // The settings page stores the choice index (0..3), and the
+        // engine's modes are index + 1.
+        load(&|k| match k {
+            "mode" => Some("1".to_string()),
+            "protect_at" => Some("1".to_string()),
+            _ => None,
+        });
+        assert_eq!(state().config.mode, 2);
+        assert_eq!(state().config.protect_at, 1);
+        load(&|k| match k {
+            "mode" => Some("0".to_string()),
+            "protect_at" => Some("99".to_string()),
+            _ => None,
+        });
+        assert_eq!(state().config.mode, 1);
+        assert_eq!(state().config.protect_at, 5);
+        load(&|k| match k {
+            "mode" => Some("3".to_string()),
+            _ => None,
+        });
+        assert_eq!(state().config.mode, 4);
     }
 
     #[test]

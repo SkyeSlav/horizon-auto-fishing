@@ -7,6 +7,6 @@ description = """Horizon Auto Fishing automates fishing input: it sends raw use_
 
 Many servers forbid AFK or automated fishing, or may flag it with an anticheat, so using this mod can get you banned. Check the server's rules first.
 
-Break protection keeps a rod from being used once 5 or fewer durability remain, and the all-rods modes swap a worn-out rod for the freshest rod in your hotbar or inventory. Delays get a small random extra (up to 5 ticks by default). The opt-in junk filter throws away only the items you list — while it is on, it drops one listed item per tick, even when you are not fishing."""
+Break protection keeps a rod from being used once the protect-at threshold (default 5) or fewer durability remain, and the all-rods modes swap a worn-out rod for the freshest rod in your hotbar or inventory. Delays get a small random extra (up to 5 ticks by default). The opt-in junk filter throws away only the items you list — while it is on, it discards the whole stack of a listed item, one stack per tick, even when you are not fishing."""
 authors = ["SkyeSlav"]
 license = "MIT"
