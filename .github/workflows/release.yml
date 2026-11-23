@@ -10,7 +10,7 @@ on:
       tag:
         description: "Release tag to attach the build to"
         required: true
-        default: "v1.0.4"
+        default: "v1.0.5"
   push:
     tags: ["v*"]
 
@@ -41,9 +41,9 @@ jobs:
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           body: |
-            1.0.4: the mode is a named choice on the settings page instead of a bare 1–4 slider, break protection gets a configurable threshold (Protect at, 1–20, default 5 — set it to 1 to fish a rod down to its last durability), and a lost bobber is recast after 750 ticks instead of 1200. It also finishes the review follow-ups: "Human-like delays" is now "Random delays" everywhere, and the junk filter says plainly that it throws whole stacks. Bite detection is unchanged (checked against the cast itself).
+            1.0.5: fixes the mode migration 1.0.4 shipped with. The mode now lives under a new key, and the first load after updating migrates a mode saved by 1.0.3 to it — all four values (1–4) keep the mode they had, before any automation runs. The old 1–4 slider stays on the settings page beside the named choice, and the two stay in sync: moving either one updates the other. Bite detection is unchanged (checked against the cast itself).
 
-            Note: the mode setting changed from a slider to a choice, so a mode stored by 1.0.3 can read shifted on the first launch — check the mode name on the `/autofish` status line after updating.
+            Note: a value stored by 1.0.4 (a choice index under the old key) cannot be told apart from a 1.0.3 slider value, so if you installed 1.0.4 from GitHub, check the mode name on the `/autofish` status line once after updating.
 
-            Horizon launcher users: take `auto-fishing-1.0.4.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
+            Horizon launcher users: take `auto-fishing-1.0.5.hmod`. The `.hnmod` asset on 1.0.0 is the old Starling 0.8.0 build, discontinued.
           files: hmod/target/horizon-mod/*.hmod

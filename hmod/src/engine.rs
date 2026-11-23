@@ -36,7 +36,7 @@ use std::sync::{LazyLock, Mutex, MutexGuard};
 
 pub const ID: &str = "auto_fishing";
 pub const NAME: &str = "Auto Fishing";
-pub const VERSION: &str = "1.0.4";
+pub const VERSION: &str = "1.0.5";
 pub const DESCRIPTION: &str = "Automates fishing input: reels in on the bite and casts again, with break protection, inventory rod swapping and random delays. Many servers forbid automated fishing — check the rules first.";
 
 /// Recast-delay choices the settings page cycles through, in ticks.
@@ -50,7 +50,15 @@ const PROTECT_ATS: [u64; 6] = [1, 2, 3, 5, 10, 20];
 
 /// Settings keys, one file per key under the mod's data folder.
 const KEY_ENABLED: &str = "enabled";
+/// The mode as 1.0.3 kept it: the slider's number (1..4). 1.0.5 keeps
+/// this key registered as a range only so a value saved by 1.0.3 can
+/// still be read — the host answers None for a key no setting is
+/// registered under — and migrates it to `KEY_MODE_V2` on load.
 const KEY_MODE: &str = "mode";
+/// The mode as the settings page's choice index (0..3), the key 1.0.5
+/// introduced. The slider and the choice are two live controls for
+/// the same mode and are kept in sync (see `resolve_mode`).
+const KEY_MODE_V2: &str = "mode_v2";
 const KEY_PROTECT_AT: &str = "protect_at";
 const KEY_RECAST_DELAY: &str = "recast_delay";
 const KEY_CATCH_DELAY: &str = "catch_delay";
@@ -155,7 +163,11 @@ impl Config {
         })
     }
 
-    fn load(get: &dyn Fn(&str) -> Option<String>) -> Self {
+    /// The mode is passed in, already resolved from the two controls
+    /// by [`load`]: the engine never reads it raw, so a value saved
+    /// by 1.0.3's slider cannot read shifted the way 1.0.4's choice
+    /// read did.
+    fn load(get: &dyn Fn(&str) -> Option<String>, mode: u8) -> Self {
         let d = Self::default();
         let bool = |k: &str, default: bool| match get(k).as_deref() {
             Some("true") => true,
@@ -165,13 +177,6 @@ impl Config {
         let num = |k: &str, default: u64| {
             get(k).and_then(|v| v.parse::<u64>().ok()).unwrap_or(default)
         };
-        // The mode arrives as the settings page's choice index
-        // (0..3), not the mode number: the page's choice stores its
-        // option index, and the engine's modes are index + 1. A value
-        // stored by 1.0.3's slider (the mode number 1..4) therefore
-        // reads shifted on the first launch after the update — check
-        // the status line after updating.
-        let mode_idx = num(KEY_MODE, (d.mode - 1) as u64);
         let protect_at = num(KEY_PROTECT_AT, d.protect_at);
         let junk = get(KEY_JUNK)
             .map(|v| {
@@ -185,11 +190,7 @@ impl Config {
             .unwrap_or_default();
         Self {
             enabled: bool(KEY_ENABLED, d.enabled),
-            mode: if mode_idx <= 3 {
-                mode_idx as u8 + 1
-            } else {
-                d.mode
-            },
+            mode,
             protect_at: if (1..=20).contains(&protect_at) {
                 protect_at
             } else {
@@ -207,9 +208,11 @@ impl Config {
     fn stored(&self) -> Vec<(&'static str, String)> {
         vec![
             (KEY_ENABLED, self.enabled.to_string()),
-            // The choice index (mode - 1), so what the settings page
-            // reads back matches what the commands wrote.
-            (KEY_MODE, (self.mode - 1).to_string()),
+            // Both mode keys, so the two controls stay in sync: the
+            // slider keeps the mode number, the choice keeps the
+            // option index (mode - 1). A command writes both at once.
+            (KEY_MODE, self.mode.to_string()),
+            (KEY_MODE_V2, (self.mode - 1).to_string()),
             (KEY_PROTECT_AT, self.protect_at.to_string()),
             (KEY_RECAST_DELAY, self.recast_delay.to_string()),
             (KEY_CATCH_DELAY, self.catch_delay.to_string()),
@@ -299,6 +302,12 @@ struct State {
     config: Config,
     /// Settings writes the adapter still has to persist.
     store: Vec<(String, String)>,
+    /// The mode the two controls last read as, so `load` can tell
+    /// which one the player just moved: the slider's number and the
+    /// choice's index (+1), as modes 1..4. None until the first load
+    /// of this session.
+    seen_mode_legacy: Option<u8>,
+    seen_mode_choice: Option<u8>,
     tick: u64,
     phase: Phase,
     /// Whether a session is running (started by the player's cast).
@@ -333,6 +342,8 @@ impl Default for State {
         Self {
             config: Config::default(),
             store: Vec::new(),
+            seen_mode_legacy: None,
+            seen_mode_choice: None,
             tick: 0,
             phase: Phase::Idle,
             session: false,
@@ -446,9 +457,112 @@ fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Read the settings from the game's files.
+/// The mode from the two controls `load` just read, as modes 1..4:
+/// `legacy` is the 1.0.3 slider's number under `mode`, `choice` the
+/// 1.0.5 choice's index under `mode_v2` (+1). The second value is the
+/// one key to sync afterwards, if any — the control that lost is
+/// written to match the winner, so the two agree on the next load
+/// and the migration never runs twice.
+///
+/// The slider and the choice are two live controls for the same mode,
+/// so a load has to tell which one the player just moved, and the
+/// first load of a session has to tell a 1.0.3 save from a later
+/// edit:
+///
+/// - First load: the controls agree, or the choice is still its
+///   default — the slider is the truth. That is the 1.0.3 migration:
+///   a save from 1.0.3 holds only the slider (the choice never
+///   existed), so the slider's number is the player's mode and the
+///   choice is synced to it. When the controls disagree and the
+///   choice is set, the choice wins: a choice edit made on the title
+///   screen, or after a sync write was lost.
+/// - Later loads: whichever control moved since last seen wins, and
+///   the other is synced to it. Neither moved: the mode stays as the
+///   engine has it (a command may have set it — commands write both
+///   keys at once). Both moved at once cannot happen through the page
+///   (each edit loads) or a command (it writes both consistently),
+///   so the choice wins as the tiebreak.
+///
+/// Out-of-range or unparseable values clamp to a mode, never crash:
+/// a slider below 1 reads as 1, above 4 as 4; a choice index above 3
+/// as mode 4. A value stored by 1.0.4 (a choice index under `mode`)
+/// is indistinguishable from a 1.0.3 slider value — a range stores
+/// 2.0 as "2" and a choice stores index 2 as "2" — so 1.0.4 users
+/// migrate as if it were 1.0.3 and should check the status line
+/// once; 1.0.4 never reached the registry, so that is nobody on the
+/// registry's population.
+fn resolve_mode(
+    seen_legacy: Option<u8>,
+    seen_choice: Option<u8>,
+    legacy: u8,
+    choice: u8,
+    current: u8,
+) -> (u8, Option<(&'static str, String)>) {
+    let sync_choice = |mode: u8| Some((KEY_MODE_V2, (mode - 1).to_string()));
+    let sync_legacy = |mode: u8| Some((KEY_MODE, mode.to_string()));
+    match (seen_legacy, seen_choice) {
+        (None, None) => {
+            if legacy == choice {
+                (legacy, None)
+            } else if choice == 2 {
+                // The choice is still its default (index 1 = mode 2):
+                // the slider is a 1.0.3 save migrating.
+                (legacy, sync_choice(legacy))
+            } else {
+                (choice, sync_legacy(choice))
+            }
+        }
+        (Some(seen_legacy), Some(seen_choice)) => {
+            let legacy_moved = legacy != seen_legacy;
+            let choice_moved = choice != seen_choice;
+            match (legacy_moved, choice_moved) {
+                (true, false) => (legacy, sync_choice(legacy)),
+                (false, true) => (choice, sync_legacy(choice)),
+                (true, true) => {
+                    if legacy == choice {
+                        (legacy, None)
+                    } else {
+                        (choice, sync_legacy(choice))
+                    }
+                }
+                (false, false) => (current, None),
+            }
+        }
+        // Unreachable: the two are always set together.
+        _ => (current, None),
+    }
+}
+
+/// Read the settings from the game's files. Runs at the start of
+/// every tick and on every command and setting change, before any
+/// automation runs, so a migrated mode is in force from the first
+/// tick after the update.
 pub fn load(get: &dyn Fn(&str) -> Option<String>) {
-    state().config = Config::load(get);
+    let mut s = state();
+    // The slider's number (1..4), defaulting to mode 2 when nothing
+    // was ever stored; the choice's index (+1), defaulting to mode 2.
+    let legacy = get(KEY_MODE)
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(2.0)
+        .clamp(1.0, 4.0) as u8;
+    let choice = get(KEY_MODE_V2)
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(1)
+        .min(3) as u8
+        + 1;
+    let (mode, sync) = resolve_mode(
+        s.seen_mode_legacy,
+        s.seen_mode_choice,
+        legacy,
+        choice,
+        s.config.mode,
+    );
+    s.seen_mode_legacy = Some(legacy);
+    s.seen_mode_choice = Some(choice);
+    if let Some((key, value)) = sync {
+        s.store.push((key.to_string(), value));
+    }
+    s.config = Config::load(get, mode);
 }
 
 /// Settings writes the adapter still has to persist.
@@ -1737,30 +1851,141 @@ mod tests {
         assert!(!state().config.enabled);
     }
 
+    /// A fake host settings store for the migration tests: `load`
+    /// reads from it, and the queued store writes go back into it the
+    /// way the adapter's persist would.
+    fn host_store(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn apply_store(map: &mut std::collections::HashMap<String, String>) {
+        for (k, v) in take_store() {
+            map.insert(k, v);
+        }
+    }
+
+    /// Every mode a 1.0.3 slider could have saved migrates to the
+    /// same mode under the choice key, and the second load changes
+    /// nothing: the migration runs once and never shifts again.
     #[test]
-    fn config_load_reads_mode_as_choice_index() {
+    fn legacy_mode_values_migrate_to_the_same_mode() {
+        for (saved, mode) in [("1", 1u8), ("2", 2), ("3", 3), ("4", 4)] {
+            reset();
+            let mut map = host_store(&[("mode", saved)]);
+            load(&|k| map.get(k).cloned());
+            assert_eq!(state().config.mode, mode, "saved {saved}");
+            // The choice key is synced to the migrated mode — except
+            // mode 2, which the choice already defaults to.
+            if mode == 2 {
+                assert!(take_store().is_empty(), "saved {saved}: no sync needed");
+            } else {
+                assert!(
+                    take_store()
+                        .iter()
+                        .any(|(k, v)| k == "mode_v2" && v == &(mode - 1).to_string()),
+                    "saved {saved}: expected a mode_v2 sync write"
+                );
+                apply_store(&mut map);
+            }
+            // The next load sees both controls agreeing: no more
+            // writes, and the mode does not shift again.
+            load(&|k| map.get(k).cloned());
+            assert_eq!(state().config.mode, mode, "saved {saved}, second load");
+            assert!(take_store().is_empty(), "saved {saved}: second load wrote");
+        }
+    }
+
+    #[test]
+    fn no_saved_mode_defaults_to_mode_2() {
         reset();
-        // The settings page stores the choice index (0..3), and the
-        // engine's modes are index + 1.
-        load(&|k| match k {
-            "mode" => Some("1".to_string()),
-            "protect_at" => Some("1".to_string()),
-            _ => None,
-        });
+        let map = host_store(&[]);
+        load(&|k| map.get(k).cloned());
         assert_eq!(state().config.mode, 2);
-        assert_eq!(state().config.protect_at, 1);
-        load(&|k| match k {
-            "mode" => Some("0".to_string()),
-            "protect_at" => Some("99".to_string()),
-            _ => None,
-        });
-        assert_eq!(state().config.mode, 1);
-        assert_eq!(state().config.protect_at, 5);
-        load(&|k| match k {
-            "mode" => Some("3".to_string()),
-            _ => None,
-        });
+        assert!(take_store().is_empty());
+    }
+
+    #[test]
+    fn choice_change_wins_over_the_slider() {
+        reset();
+        let mut map = host_store(&[("mode", "2"), ("mode_v2", "1")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 2);
+        assert!(take_store().is_empty());
+        // The player moves the choice to mode 4: the slider is synced.
+        map.insert("mode_v2".to_string(), "3".to_string());
+        load(&|k| map.get(k).cloned());
         assert_eq!(state().config.mode, 4);
+        assert!(take_store().iter().any(|(k, v)| k == "mode" && v == "4"));
+        apply_store(&mut map);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 4);
+        assert!(take_store().is_empty());
+    }
+
+    #[test]
+    fn slider_change_wins_over_the_choice() {
+        reset();
+        let mut map = host_store(&[("mode", "2"), ("mode_v2", "1")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 2);
+        // The player moves the slider to 4: the choice is synced.
+        map.insert("mode".to_string(), "4".to_string());
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 4);
+        assert!(take_store().iter().any(|(k, v)| k == "mode_v2" && v == "3"));
+        apply_store(&mut map);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 4);
+        assert!(take_store().is_empty());
+    }
+
+    #[test]
+    fn first_load_with_a_set_choice_favours_the_choice() {
+        reset();
+        // The slider says 2, the choice says mode 4: a choice edit
+        // that landed while the slider was stale (title screen, or a
+        // lost sync write). The choice is the newer control, so it wins.
+        let map = host_store(&[("mode", "2"), ("mode_v2", "3")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 4);
+        assert!(take_store().iter().any(|(k, v)| k == "mode" && v == "4"));
+    }
+
+    #[test]
+    fn out_of_range_mode_values_clamp() {
+        reset();
+        let map = host_store(&[("mode", "9")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 4);
+        reset();
+        let map = host_store(&[("mode", "0")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 1);
+        reset();
+        let map = host_store(&[("mode", "abc")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 2);
+        reset();
+        let map = host_store(&[("mode_v2", "9")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 4);
+    }
+
+    #[test]
+    fn command_mode_writes_both_keys() {
+        reset();
+        let map = host_store(&[("mode", "2"), ("mode_v2", "1")]);
+        load(&|k| map.get(k).cloned());
+        assert_eq!(state().config.mode, 2);
+        let _ = take_store();
+        let out = command("/autofish mode 4").expect("mode command");
+        assert!(out.lines.iter().any(|l| l.contains("Mode 4")));
+        let stored = take_store();
+        assert!(stored.iter().any(|(k, v)| k == "mode" && v == "4"));
+        assert!(stored.iter().any(|(k, v)| k == "mode_v2" && v == "3"));
     }
 
     #[test]
@@ -1774,7 +1999,8 @@ mod tests {
             "junk" => Some("minecraft:rotten_flesh,, minecraft:lily_pad".to_string()),
             _ => None,
         });
-        assert_eq!(state().config.mode, 2);
+        // A slider above 4 clamps to mode 4, not the default.
+        assert_eq!(state().config.mode, 4);
         assert_eq!(state().config.recast_delay, 100);
         assert_eq!(state().config.catch_delay, 20);
         assert_eq!(state().config.jitter_max, 20);

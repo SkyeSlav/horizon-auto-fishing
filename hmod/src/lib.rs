@@ -20,7 +20,7 @@
 //! - `register_client_commands` declares `/autofish` and its usages to
 //!   the chat tree, so typing it colours and completes like the game's
 //!   own commands instead of showing red as unknown;
-//! - `register` declares the eight settings on the mod's page;
+//! - `register` declares the nine settings on the mod's page;
 //! - `client_player_logging_in` resets the session per connection.
 //!
 //! The seven registered settings hold the values the settings page
@@ -40,9 +40,10 @@ mod engine;
 
 /// The settings the mod's page edits; the junk list lives in the
 /// `junk` data file, so the commands can still change it.
-const REGISTERED_SETTINGS: [&str; 8] = [
+const REGISTERED_SETTINGS: [&str; 9] = [
     "enabled",
     "mode",
+    "mode_v2",
     "protect_at",
     "recast_delay",
     "catch_delay",
@@ -90,9 +91,14 @@ fn load(host: &dyn ClientHost) {
         "enabled" => host.setting_bool(key).map(|b| b.to_string()),
         "jitter_enabled" => host.setting_bool(key).map(|b| b.to_string()),
         "junk_enabled" => host.setting_bool(key).map(|b| b.to_string()),
+        // The mode the 1.0.3 slider saved (1..4), read as a range:
+        // the only way to see a 1.0.3 value — the host answers None
+        // for a key no range is registered under. The engine migrates
+        // it to the choice below on load.
+        "mode" => host.setting_f64(key).map(|f| format!("{}", f)),
         // The mode is a choice on the settings page: the host keeps
         // the option index, and the engine's modes are index + 1.
-        "mode" => host.setting_choice(key).map(|i| format!("{}", i)),
+        "mode_v2" => host.setting_choice(key).map(|i| format!("{}", i)),
         "protect_at" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
         "recast_delay" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
         "catch_delay" => host.setting_f64(key).map(|f| format!("{}", f as u64)),
@@ -381,9 +387,14 @@ impl Hooks for Mod {
         let _ = r.register_setting(SettingSpec::toggle("enabled", "Auto Fishing", true));
         // The mode is a choice, not a slider: the page's button cycles
         // the named modes, so the player can see what each one does.
-        // Default index 1 = mode 2, the previous default.
+        // Default index 1 = mode 2, the previous default. The old
+        // 1–4 slider stays registered beside it, as the only way to
+        // read a mode saved by 1.0.3 — the host answers None for a key
+        // no setting is registered under — and the engine migrates
+        // that value to this choice on load, keeping the two in sync.
+        let _ = r.register_setting(SettingSpec::range("mode", "Mode (1–4)", 1.0, 4.0, 1.0, 2.0));
         let _ = r.register_setting(SettingSpec::choice(
-            "mode",
+            "mode_v2",
             "Mode",
             [
                 "Current rod",

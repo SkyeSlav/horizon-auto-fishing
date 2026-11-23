@@ -1,6 +1,6 @@
 id = "auto_fishing"
 name = "Auto Fishing"
-version = "1.0.4"
+version = "1.0.5"
 description = "Automates fishing input: reels in on the bite and casts again, with break protection, inventory rod swapping and random delays. Many servers forbid automated fishing — check the rules first."
 authors = ["SkyeSlav"]
 license = "MIT"
