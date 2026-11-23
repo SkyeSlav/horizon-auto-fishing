@@ -1,5 +1,7 @@
 # horizon-auto-fishing
 
+> Soon to be renamed to **LetMeFish**.
+
 <p align="center"><img src="logo.png" alt="horizon-auto-fishing logo: a fishing rod inside a white loop on a dark background" width="180"></p>
 
 <p align="center">
